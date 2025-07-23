@@ -19,7 +19,7 @@ jobs:
         run: |
           python -m venv venv
           source venv/bin/activate
-          pip install -r zt-image-fetch/requirements.txt
+          pip install -r requirements.txt
 
       - name: Run image scraper
         env:
@@ -27,11 +27,11 @@ jobs:
           API_PASSWORD: ${{ secrets.API_PASSWORD }}
         run: |
           source venv/bin/activate
-          python zt-image-fetch/image_scraper.py
+          python image_scraper.py
       
       - name: Archive results
         run: |
-          zip -r zt-image-fetch.zip zt-image-fetch/tsa-images zt-image-fetch/downloaded-images.csv
+          zip -r zt-image-fetch.zip tsa-images downloaded-images.csv
 
       - name: Upload results
         uses: actions/upload-artifact@v3
