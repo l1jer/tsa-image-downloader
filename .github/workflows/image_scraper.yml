@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -39,7 +39,7 @@ jobs:
           zip -r zt-image-fetch.zip tsa-images downloaded-images.csv
 
       - name: Upload results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: zt-image-fetch-results
           path: zt-image-fetch.zip 
