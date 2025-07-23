@@ -1,0 +1,40 @@
+name: Image Scraper
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scrape-images:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r zt-image-fetch/requirements.txt
+
+      - name: Run image scraper
+        env:
+          API_USERNAME: ${{ secrets.API_USERNAME }}
+          API_PASSWORD: ${{ secrets.API_PASSWORD }}
+        run: |
+          source venv/bin/activate
+          python zt-image-fetch/image_scraper.py
+      
+      - name: Archive results
+        run: |
+          zip -r zt-image-fetch.zip zt-image-fetch/tsa-images zt-image-fetch/downloaded-images.csv
+
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: zt-image-fetch-results
+          path: zt-image-fetch.zip 
