@@ -12,9 +12,9 @@ API_PASSWORD = os.environ.get('API_PASSWORD')
 BASE_IMAGE_URL = 'https://sales.tasco.net.au'
 
 # File paths
-INPUT_CSV = 'zt-image-fetch/product-scrape-list.csv'
-OUTPUT_DIR = 'zt-image-fetch/tsa-images'
-DOWNLOADED_IMAGES_CSV = 'zt-image-fetch/downloaded-images.csv'
+INPUT_CSV = 'product-scrape-list.csv'
+OUTPUT_DIR = 'tsa-images'
+DOWNLOADED_IMAGES_CSV = 'downloaded-images.csv'
 
 def get_auth_headers():
     """Encodes credentials and returns authorization headers."""
