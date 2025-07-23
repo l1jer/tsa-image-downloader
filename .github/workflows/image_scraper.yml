@@ -2,6 +2,11 @@ name: Image Scraper
 
 on:
   workflow_dispatch:
+  schedule:
+    # Runs daily at 21:00 UTC.
+    # This corresponds to 7:00 AM in Sydney (AEST).
+    # Note: This will be 8:00 AM during daylight saving time (AEDT).
+    - cron: '0 21 * * *'
 
 jobs:
   scrape-images:
