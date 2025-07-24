@@ -44,55 +44,73 @@ def get_auth_headers():
 def download_images(item_code, headers, session):
     """
     Downloads all images for a given item code, sanitizing the item code to create
-    valid directory and file names.
+    valid directory and file names. It includes a retry mechanism for transient API
+    issues where a valid item might temporarily return no data.
     """
     product_url = f"{API_URL}?code={item_code}"
-    saved_image_paths = []
+    
+    # Retry logic for intermittent API issues where a product might temporarily return no data.
+    for attempt in range(3):
+        try:
+            response = session.get(product_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            data = response.json()
 
-    try:
-        response = session.get(product_url, headers=headers, timeout=30)
-        response.raise_for_status()
-        data = response.json()
+            products = data.get('products')
 
-        images = data.get('products', [{}])[0].get('images', [])
-        if not images:
-            print(f"No images found for {item_code}.")
-            return []
+            # If we get a valid product list, process it and exit the function.
+            if products:
+                # We assume the first product in the list is the one we want.
+                images = products[0].get('images')
 
-        # Sanitize item_code to make it a valid directory name
-        sanitized_item_code = item_code.replace('/', '_').replace('\\', '_')
-        product_dir_abs = os.path.join(OUTPUT_DIR, sanitized_item_code)
-        os.makedirs(product_dir_abs, exist_ok=True)
-        
-        print(f"Found {len(images)} images for {item_code}. Downloading...")
-        for i, img_data in enumerate(images):
-            try:
-                img_url = urljoin(BASE_IMAGE_URL, img_data['url'])
-                img_response = session.get(img_url, headers=headers, timeout=30)
-                img_response.raise_for_status()
+                if not images:
+                    print(f"No images found for {item_code}.")
+                    return []
+
+                # Sanitize item_code to make it a valid directory name
+                saved_image_paths = []
+                sanitized_item_code = item_code.replace('/', '_').replace('\\', '_')
+                product_dir_abs = os.path.join(OUTPUT_DIR, sanitized_item_code)
+                os.makedirs(product_dir_abs, exist_ok=True)
                 
-                original_extension = os.path.splitext(img_data['filename'])[1] or '.jpg'
-                img_name = f"{sanitized_item_code}_{i+1:03d}{original_extension}"
-                
-                saved_file_path_abs = os.path.join(product_dir_abs, img_name)
-                saved_file_path_rel = os.path.join(f"/{sanitized_item_code}", img_name).replace('\\', '/')
+                print(f"Found {len(images)} images for {item_code}. Downloading...")
+                for i, img_data in enumerate(images):
+                    try:
+                        img_url = urljoin(BASE_IMAGE_URL, img_data['url'])
+                        img_response = session.get(img_url, headers=headers, timeout=30)
+                        img_response.raise_for_status()
+                        
+                        original_extension = os.path.splitext(img_data['filename'])[1] or '.jpg'
+                        img_name = f"{sanitized_item_code}_{i+1:03d}{original_extension}"
+                        
+                        saved_file_path_abs = os.path.join(product_dir_abs, img_name)
+                        saved_file_path_rel = os.path.join(f"/{sanitized_item_code}", img_name).replace('\\', '/')
 
-                with open(saved_file_path_abs, 'wb') as f:
-                    f.write(img_response.content)
-                print(f"  Downloaded {img_name}")
-                saved_image_paths.append(saved_file_path_rel)
-            except requests.exceptions.RequestException as e:
-                print(f"  Error downloading image {img_data.get('filename', 'N/A')}: {e}")
-            except IOError as e:
-                print(f"  Error saving image {img_data.get('filename', 'N/A')}: {e}")
-        return saved_image_paths
+                        with open(saved_file_path_abs, 'wb') as f:
+                            f.write(img_response.content)
+                        print(f"  Downloaded {img_name}")
+                        saved_image_paths.append(saved_file_path_rel)
+                    except requests.exceptions.RequestException as e:
+                        print(f"  Error downloading image {img_data.get('filename', 'N/A')}: {e}")
+                    except IOError as e:
+                        print(f"  Error saving image {img_data.get('filename', 'N/A')}: {e}")
+                return saved_image_paths
 
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching product data for {item_code}: {e}")
-        return []
-    except (ValueError, IndexError) as e:
-        print(f"Error parsing JSON response for {item_code}: {e}")
-        return []
+            # If 'products' is empty, log, wait, and retry.
+            if attempt < 2:  # 2 is the max index for a 3-attempt loop (0, 1, 2)
+                print(f"Warning: No product data for {item_code} on attempt {attempt + 1}/3. Retrying in 5s...")
+                time.sleep(5)
+
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching product data for {item_code}: {e}")
+            return []  # Fail fast on connection errors, as the session already retried.
+        except (ValueError, IndexError) as e:
+            print(f"Error parsing JSON response for {item_code}: {e}")
+            return [] # Fail fast on malformed data.
+    
+    # If all attempts fail, log the final failure and move on.
+    print(f"No product data returned for {item_code} after 3 attempts.")
+    return []
 
 def main():
     """
