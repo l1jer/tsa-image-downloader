@@ -2,11 +2,6 @@ name: Image Scraper
 
 on:
   workflow_dispatch:
-  schedule:
-    # Runs daily at 21:00 UTC.
-    # This corresponds to 7:00 AM in Sydney (AEST).
-    # Note: This will be 8:00 AM during daylight saving time (AEDT).
-    - cron: '0 21 * * *'
 
 jobs:
   scrape-images:
@@ -27,6 +22,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run image scraper
+        id: scraper
         env:
           API_USERNAME: ${{ secrets.API_USERNAME }}
           API_PASSWORD: ${{ secrets.API_PASSWORD }}
@@ -34,11 +30,27 @@ jobs:
           source venv/bin/activate
           python image_scraper.py
       
-      - name: Archive results
+      - name: Commit progress
+        if: always()
         run: |
-          zip -r image-fetch.zip tsa-images downloaded-images.csv
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add downloaded-images.csv
+          # Only commit if there are changes
+          if ! git diff --staged --quiet; then
+            git commit -m "feat: Update image download progress"
+            git push
+          else
+            echo "No changes to commit."
+          fi
 
-      - name: Upload results
+      - name: Archive image results
+        if: always()
+        run: |
+          zip -r zt-image-fetch.zip tsa-images
+      
+      - name: Upload image artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zt-image-fetch-results
