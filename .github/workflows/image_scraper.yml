@@ -26,6 +26,8 @@ jobs:
         env:
           API_USERNAME: ${{ secrets.API_USERNAME }}
           API_PASSWORD: ${{ secrets.API_PASSWORD }}
+          API_USERNAME_2: ${{ secrets.API_USERNAME_2 }}
+          API_PASSWORD_2: ${{ secrets.API_PASSWORD_2 }}
         run: |
           source venv/bin/activate
           python -u image_scraper.py
@@ -47,11 +49,11 @@ jobs:
       - name: Archive image results
         if: always()
         run: |
-          zip -r zt-image-fetch.zip tsa-images
+          zip -r zt-image-fetch.zip tsa-images downloaded-images.csv
       
       - name: Upload image artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: zt-image-fetch-results
-          path: zt-image-fetch.zip 
+          name: tsa-image-fetch-results
+          path: tsa-image-fetch.zip 
