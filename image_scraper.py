@@ -98,26 +98,34 @@ def get_gdrive_service():
     if not GDRIVE_CREDENTIALS_JSON:
         print("FATAL: GOOGLE_DRIVE_CREDENTIALS secret not set.")
         return None
+    
+    creds_file_path = "gdrive_creds.json"
     try:
         # Save the credentials to a temporary file
-        with open("gdrive_creds.json", "w") as creds_file:
+        with open(creds_file_path, "w") as creds_file:
             creds_file.write(GDRIVE_CREDENTIALS_JSON)
         
-        gauth = GoogleAuth()
-        # This line is a workaround for a PyDrive2 bug where the service_config
-        # is not initialized in non-interactive environments.
-        gauth.settings['service_config'] = {}
-        # Authenticate using the service account credentials from the temporary file
-        gauth.auth_method = 'service'
-        gauth.service_account_filename = 'gdrive_creds.json'
+        # Explicitly configure GoogleAuth settings for service account authentication
+        gauth = GoogleAuth(settings={
+            "client_config_backend": "service",
+            "service_config": {
+                "client_json_file_path": creds_file_path,
+            }
+        })
+        
+        # Authenticate using the service account
+        gauth.ServiceAuth()
         drive = GoogleDrive(gauth)
         
         # Clean up the temporary credentials file
-        os.remove("gdrive_creds.json")
+        os.remove(creds_file_path)
         
         return drive
     except Exception as e:
         print(f"FATAL: Could not authenticate with Google Drive. Error: {e}")
+        # Ensure the temporary file is cleaned up on error
+        if os.path.exists(creds_file_path):
+            os.remove(creds_file_path)
         return None
 
 def set_workflow_output(name, value):
