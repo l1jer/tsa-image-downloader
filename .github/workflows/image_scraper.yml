@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # Allows the action to commit to the repository
+      actions: write  # Allows the action to trigger other workflows
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -50,8 +51,8 @@ jobs:
 
       - name: Continue execution
         if: always() && steps.scraper.outputs.work_done == 'false'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Work is not done. Triggering next workflow run."
-          gh workflow run "${{ github.workflow }}" --ref ${{ github.ref_name }} 
+          gh workflow run "${{ github.workflow }}" --ref ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 

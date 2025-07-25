@@ -94,16 +94,36 @@ def fetch_product_data(item_code, api_url, headers, session):
 
 def get_gdrive_service():
     """Initializes and returns the Google Drive service object."""
+    if not GDRIVE_CREDENTIALS_JSON:
+        print("FATAL: GOOGLE_DRIVE_CREDENTIALS secret not set.")
+        return None
     try:
+        # Save the credentials to a temporary file
+        with open("gdrive_creds.json", "w") as creds_file:
+            creds_file.write(GDRIVE_CREDENTIALS_JSON)
+        
         gauth = GoogleAuth()
-        # Authenticate using the service account credentials from the environment variable
+        # Authenticate using the service account credentials from the temporary file
         gauth.auth_method = 'service'
-        gauth.credentials = gauth.get_credentials_from_json(json.loads(GDRIVE_CREDENTIALS_JSON))
+        gauth.service_account_filename = 'gdrive_creds.json'
         drive = GoogleDrive(gauth)
+        
+        # Clean up the temporary credentials file
+        os.remove("gdrive_creds.json")
+        
         return drive
     except Exception as e:
         print(f"FATAL: Could not authenticate with Google Drive. Error: {e}")
         return None
+
+def set_workflow_output(name, value):
+    """Sets an output for the GitHub Actions workflow step."""
+    github_output_file = os.getenv('GITHUB_OUTPUT')
+    if github_output_file:
+        with open(github_output_file, 'a') as f:
+            f.write(f"{name}={value}\n")
+    else:
+        print(f"::set-output name={name}::{value}") # Fallback for local testing
 
 def upload_to_gdrive(drive, local_path, parent_folder_id):
     """Uploads a file to a specific Google Drive folder and returns its ID."""
@@ -262,11 +282,11 @@ def main():
     items_to_process = [row for row in all_rows if row['Item Code'] not in processed_items]
     if not items_to_process:
         print("All items have already been processed. Nothing to do.")
-        print("::set-output name=work_done::true") # Signal to workflow that work is complete
+        set_workflow_output('work_done', 'true') # Signal to workflow that work is complete
         return
         
     print(f"Found {len(all_rows)} total items. {len(items_to_process)} items left to process.")
-    print("::set-output name=work_done::false") # Signal to workflow that work is not complete
+    set_workflow_output('work_done', 'false') # Signal to workflow that work is not complete
     
     # --- Setup ---
     session = create_requests_session()
@@ -327,4 +347,4 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"A critical error occurred: {e}")
         traceback.print_exc() 
-        print("::set-output name=work_done::false") # Ensure we signal to continue on critical error 
+        set_workflow_output('work_done', 'false') # Ensure we signal to continue on critical error 
