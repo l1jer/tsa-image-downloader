@@ -7,6 +7,10 @@ import traceback
 from urllib.parse import urljoin
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import subprocess
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
+import json
 
 # --- Configuration ---
 API_URL_1 = 'https://sales.tasco.net.au/userapi/json/product/v4_tasco.json'
@@ -23,6 +27,13 @@ API_PASSWORD_1 = os.environ.get('API_PASSWORD')
 # Credentials for the fallback API
 API_USERNAME_2 = os.environ.get('API_USERNAME_2')
 API_PASSWORD_2 = os.environ.get('API_PASSWORD_2')
+
+# --- Google Drive Configuration ---
+GDRIVE_FOLDER_ID = '1sIouYwI5ZaN4mK_CqKkOsXIi__QC_JM6'
+GDRIVE_CREDENTIALS_JSON = os.environ.get('GOOGLE_DRIVE_CREDENTIALS')
+
+# Token for committing progress
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN')
 
 def create_requests_session():
     """
@@ -81,10 +92,85 @@ def fetch_product_data(item_code, api_url, headers, session):
         print(f"  Error parsing JSON from {api_url} for {item_code}: {e}")
         return None
 
-def download_images(item_code, session):
+def get_gdrive_service():
+    """Initializes and returns the Google Drive service object."""
+    try:
+        gauth = GoogleAuth()
+        # Authenticate using the service account credentials from the environment variable
+        gauth.auth_method = 'service'
+        gauth.credentials = gauth.get_credentials_from_json(json.loads(GDRIVE_CREDENTIALS_JSON))
+        drive = GoogleDrive(gauth)
+        return drive
+    except Exception as e:
+        print(f"FATAL: Could not authenticate with Google Drive. Error: {e}")
+        return None
+
+def upload_to_gdrive(drive, local_path, parent_folder_id):
+    """Uploads a file to a specific Google Drive folder and returns its ID."""
+    try:
+        file_name = os.path.basename(local_path)
+        file_drive = drive.CreateFile({
+            'title': file_name,
+            'parents': [{'id': parent_folder_id}]
+        })
+        file_drive.SetContentFile(local_path)
+        file_drive.Upload()
+        print(f"  Successfully uploaded {file_name} to Google Drive.")
+        return file_drive['id']
+    except Exception as e:
+        print(f"  Error uploading {local_path} to Google Drive: {e}")
+        return None
+
+def get_or_create_gdrive_folder(drive, folder_name, parent_id):
+    """Finds a folder by name or creates it if it doesn't exist."""
+    query = f"'{parent_id}' in parents and title = '{folder_name}' and trashed = false"
+    file_list = drive.ListFile({'q': query}).GetList()
+    if file_list:
+        return file_list[0]['id']
+    else:
+        print(f"  Creating Google Drive folder: {folder_name}")
+        folder_metadata = {
+            'title': folder_name,
+            'parents': [{'id': parent_id}],
+            'mimeType': 'application/vnd.google-apps.folder'
+        }
+        folder = drive.CreateFile(folder_metadata)
+        folder.Upload()
+        return folder['id']
+
+def commit_progress():
+    """Commits the downloaded-images.csv file to the repository."""
+    try:
+        # Check if there are changes to commit
+        if subprocess.run(['git', 'diff', '--staged', '--quiet']).returncode != 0:
+            print("No changes to commit.")
+            return
+
+        print("Committing progress...")
+        subprocess.run(['git', 'add', DOWNLOADED_IMAGES_CSV], check=True)
+        
+        # Check for staged changes again before committing
+        status_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
+        if DOWNLOADED_IMAGES_CSV not in status_result.stdout:
+            print("No new changes to downloaded-images.csv to commit.")
+            return
+
+        subprocess.run(['git', 'commit', '-m', 'feat: Update image download progress (automated)'], check=True)
+        
+        # Configure remote URL with token for authentication
+        repo_url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{os.environ['GITHUB_REPOSITORY']}.git"
+        subprocess.run(['git', 'remote', 'set-url', 'origin', repo_url], check=True)
+        
+        subprocess.run(['git', 'push', 'origin', f"HEAD:{os.environ['GITHUB_REF_NAME']}"], check=True)
+        print("Progress committed successfully.")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during git operation: {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred during commit_progress: {e}")
+
+def download_images(item_code, session, drive):
     """
-    Downloads all images for a given item code. It tries the primary API first,
-    then uses the fallback API if the first one fails to return data.
+    Downloads all images for a given item code and uploads them to Google Drive.
     """
     # --- Try Primary API ---
     print(f"  Attempting to fetch from primary API...")
@@ -107,12 +193,16 @@ def download_images(item_code, session):
         print(f"No images found for {item_code}.")
         return []
 
-    saved_image_paths = []
+    # Get or create the specific subfolder for this item code in Google Drive
     sanitized_item_code = item_code.replace('/', '_').replace('\\', '_')
-    product_dir_abs = os.path.join(OUTPUT_DIR, sanitized_item_code)
-    os.makedirs(product_dir_abs, exist_ok=True)
+    gdrive_subfolder_id = get_or_create_gdrive_folder(drive, sanitized_item_code, GDRIVE_FOLDER_ID)
+    if not gdrive_subfolder_id:
+        print(f"  Could not create or find Google Drive folder for {item_code}. Skipping.")
+        return []
     
-    print(f"Found {len(images)} images for {item_code}. Downloading...")
+    saved_image_gdrive_ids = []
+    
+    print(f"Found {len(images)} images for {item_code}. Downloading and uploading...")
     for i, img_data in enumerate(images):
         try:
             # Use the primary auth headers for image download as they are on the same domain
@@ -123,18 +213,24 @@ def download_images(item_code, session):
             original_extension = os.path.splitext(img_data['filename'])[1] or '.jpg'
             img_name = f"{sanitized_item_code}_{i+1:03d}{original_extension}"
             
-            saved_file_path_abs = os.path.join(product_dir_abs, img_name)
-            saved_file_path_rel = os.path.join(f"/{sanitized_item_code}", img_name).replace('\\', '/')
-
-            with open(saved_file_path_abs, 'wb') as f:
+            # Save the image locally to a temporary path
+            local_temp_path = os.path.join(OUTPUT_DIR, img_name)
+            with open(local_temp_path, 'wb') as f:
                 f.write(img_response.content)
-            print(f"  Downloaded {img_name}")
-            saved_image_paths.append(saved_file_path_rel)
+            
+            # Upload the local file to Google Drive and get its ID
+            gdrive_file_id = upload_to_gdrive(drive, local_temp_path, gdrive_subfolder_id)
+            if gdrive_file_id:
+                saved_image_gdrive_ids.append(gdrive_file_id)
+
+            # Clean up the local file after upload
+            os.remove(local_temp_path)
+
         except requests.exceptions.RequestException as e:
             print(f"  Error downloading image {img_data.get('filename', 'N/A')}: {e}")
         except IOError as e:
-            print(f"  Error saving image {img_data.get('filename', 'N/A')}: {e}")
-    return saved_image_paths
+            print(f"  Error processing image {img_data.get('filename', 'N/A')}: {e}")
+    return saved_image_gdrive_ids
 
 def main():
     """
@@ -170,19 +266,26 @@ def main():
     items_to_process = [row for row in all_rows if row['Item Code'] not in processed_items]
     if not items_to_process:
         print("All items have already been processed. Nothing to do.")
+        print("::set-output name=work_done::true") # Signal to workflow that work is complete
         return
         
     print(f"Found {len(all_rows)} total items. {len(items_to_process)} items left to process.")
+    print("::set-output name=work_done::false") # Signal to workflow that work is not complete
     
     # --- Setup ---
     session = create_requests_session()
+    drive = get_gdrive_service()
+    if not drive:
+        return # Stop execution if Google Drive is not available
+
+    last_commit_time = time.time()
     
     # --- Process items and write results incrementally ---
     file_exists = os.path.exists(DOWNLOADED_IMAGES_CSV) and os.path.getsize(DOWNLOADED_IMAGES_CSV) > 0
     with open(DOWNLOADED_IMAGES_CSV, mode='a', newline='', encoding='utf-8') as outfile:
         writer = csv.writer(outfile)
         if not file_exists:
-            writer.writerow(['Item Code', 'Saved Image Path'])
+            writer.writerow(['Item Code', 'Google Drive File ID'])
 
         for i, row in enumerate(items_to_process):
             item_code = row.get('Item Code')
@@ -192,22 +295,33 @@ def main():
 
             print(f"\nProcessing item {i + 1}/{len(items_to_process)}: {item_code}")
             try:
-                saved_paths = download_images(item_code, session)
+                gdrive_ids = download_images(item_code, session, drive)
                 
                 # Log result to CSV, whether images were found or not
-                if saved_paths:
-                    for path in saved_paths:
-                        writer.writerow([item_code, path])
+                if gdrive_ids:
+                    for file_id in gdrive_ids:
+                        writer.writerow([item_code, file_id])
                 else:
-                    writer.writerow([item_code, ''])
+                    writer.writerow([item_code, 'NO_IMAGES_FOUND'])
                 
                 outfile.flush() # Ensure data is written to disk immediately
                 
+                # --- Commit progress every 5 minutes ---
+                current_time = time.time()
+                if current_time - last_commit_time > 300: # 300 seconds = 5 minutes
+                    print("\n--- 5-minute interval reached. Committing progress. ---")
+                    commit_progress()
+                    last_commit_time = current_time
+
                 if i < len(items_to_process) - 1:
                     time.sleep(5) # Rate limit between different item codes
             except Exception as e:
                 print(f"An unexpected error occurred while processing item {item_code}: {e}")
                 traceback.print_exc()
+
+    # Final commit at the end of the run
+    print("\n--- Process finished. Committing final progress. ---")
+    commit_progress()
 
     print(f"\nProcess complete.")
 
@@ -217,3 +331,4 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"A critical error occurred: {e}")
         traceback.print_exc() 
+        print("::set-output name=work_done::false") # Ensure we signal to continue on critical error 
