@@ -60,18 +60,22 @@ def get_auth_headers(username, password):
     encoded_credentials = base64.b64encode(credentials.encode()).decode()
     return {'Authorization': f'Basic {encoded_credentials}'}
 
-def fetch_product_data(item_code, api_url, headers, session):
+def fetch_product_data(item_code, api_url, headers, session, retry_on_empty=True):
     """
     Attempts to fetch product data from a single API endpoint.
     Returns the list of products if successful, otherwise None.
+    Can optionally retry if the API returns an empty product list.
     """
     if not headers:
         return None # Skip if credentials are not provided
 
     product_url = f"{api_url}?code={item_code}"
+    
+    # Determine the number of attempts
+    attempts = 3 if retry_on_empty else 1
+    
     try:
-        # Retry logic for intermittent API issues where a product might temporarily return no data.
-        for attempt in range(3):
+        for attempt in range(attempts):
             response = session.get(product_url, headers=headers, timeout=30)
             time.sleep(0.2) # Throttle to 5 req/s (well within 10 req/s limit)
             response.raise_for_status()
@@ -81,11 +85,11 @@ def fetch_product_data(item_code, api_url, headers, session):
             if products:
                 return products # Success
 
-            if attempt < 2:
-                print(f"  Warning: No product data from {api_url} on attempt {attempt + 1}/3. Retrying...")
+            if attempt < attempts - 1:
+                print(f"  Warning: No product data from {api_url} on attempt {attempt + 1}/{attempts}. Retrying...")
                 time.sleep(5)
         
-        return None # All retries failed for this API
+        return None # All attempts failed for this API
     except requests.exceptions.RequestException as e:
         print(f"  Error connecting to {api_url} for {item_code}: {e}")
         return None
@@ -203,13 +207,13 @@ def download_images(item_code, session, drive):
     # --- Try Primary API ---
     print(f"  Attempting to fetch from primary API...")
     headers_1 = get_auth_headers(API_USERNAME_1, API_PASSWORD_1)
-    products = fetch_product_data(item_code, API_URL_1, headers_1, session)
+    products = fetch_product_data(item_code, API_URL_1, headers_1, session, retry_on_empty=False)
 
     # --- Try Fallback API if Primary Fails ---
     if not products:
         print(f"  Primary API failed for {item_code}. Trying fallback API...")
         headers_2 = get_auth_headers(API_USERNAME_2, API_PASSWORD_2)
-        products = fetch_product_data(item_code, API_URL_2, headers_2, session)
+        products = fetch_product_data(item_code, API_URL_2, headers_2, session) # Keeps default retry=True
 
     # --- Process Results ---
     if not products:
