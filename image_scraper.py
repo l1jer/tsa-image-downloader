@@ -141,20 +141,16 @@ def get_or_create_gdrive_folder(drive, folder_name, parent_id):
 def commit_progress():
     """Commits the downloaded-images.csv file to the repository."""
     try:
-        # Check if there are changes to commit
-        if subprocess.run(['git', 'diff', '--staged', '--quiet']).returncode != 0:
-            print("No changes to commit.")
-            return
-
-        print("Committing progress...")
+        # Stage the file first to ensure we are checking the right changes
         subprocess.run(['git', 'add', DOWNLOADED_IMAGES_CSV], check=True)
-        
-        # Check for staged changes again before committing
+
+        # Check if there are staged changes for the specific file
         status_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
         if DOWNLOADED_IMAGES_CSV not in status_result.stdout:
             print("No new changes to downloaded-images.csv to commit.")
             return
-
+            
+        print("Committing progress...")
         subprocess.run(['git', 'commit', '-m', 'feat: Update image download progress (automated)'], check=True)
         
         # Configure remote URL with token for authentication
