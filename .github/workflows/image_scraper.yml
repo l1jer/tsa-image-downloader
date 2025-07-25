@@ -54,4 +54,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Work is not done. Triggering next workflow run."
-          gh workflow run $(basename ${{ github.workflow }}) --ref ${{ github.ref_name }} 
+          gh workflow run "${{ github.workflow }}" --ref ${{ github.ref_name }} 
