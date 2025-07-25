@@ -302,10 +302,10 @@ def main():
                 
                 outfile.flush() # Ensure data is written to disk immediately
                 
-                # --- Commit progress every 5 minutes ---
+                # --- Commit progress every 30 minutes ---
                 current_time = time.time()
-                if current_time - last_commit_time > 300: # 300 seconds = 5 minutes
-                    print("\n--- 5-minute interval reached. Committing progress. ---")
+                if current_time - last_commit_time > 1800: # 1800 seconds = 30 minutes
+                    print("\n--- 30-minute interval reached. Committing progress. ---")
                     commit_progress()
                     last_commit_time = current_time
 
