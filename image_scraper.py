@@ -73,6 +73,7 @@ def fetch_product_data(item_code, api_url, headers, session):
         # Retry logic for intermittent API issues where a product might temporarily return no data.
         for attempt in range(3):
             response = session.get(product_url, headers=headers, timeout=30)
+            time.sleep(0.2) # Throttle to 5 req/s (well within 10 req/s limit)
             response.raise_for_status()
             data = response.json()
             products = data.get('products')
@@ -103,6 +104,9 @@ def get_gdrive_service():
             creds_file.write(GDRIVE_CREDENTIALS_JSON)
         
         gauth = GoogleAuth()
+        # This line is a workaround for a PyDrive2 bug where the service_config
+        # is not initialized in non-interactive environments.
+        gauth.settings['service_config'] = {}
         # Authenticate using the service account credentials from the temporary file
         gauth.auth_method = 'service'
         gauth.service_account_filename = 'gdrive_creds.json'
@@ -224,6 +228,7 @@ def download_images(item_code, session, drive):
             # Use the primary auth headers for image download as they are on the same domain
             img_url = urljoin(BASE_IMAGE_URL, img_data['url'])
             img_response = session.get(img_url, headers=headers_1, timeout=30)
+            time.sleep(0.2) # Throttle to 5 req/s (well within 10 req/s limit)
             img_response.raise_for_status()
             
             original_extension = os.path.splitext(img_data['filename'])[1] or '.jpg'
@@ -329,8 +334,6 @@ def main():
                     commit_progress()
                     last_commit_time = current_time
 
-                if i < len(items_to_process) - 1:
-                    time.sleep(5) # Rate limit between different item codes
             except Exception as e:
                 print(f"An unexpected error occurred while processing item {item_code}: {e}")
                 traceback.print_exc()
